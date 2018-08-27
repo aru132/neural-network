@@ -9,7 +9,8 @@ def loadDataset():
 
     '''Training data'''
     print('Loading Training dataset ...')
-    inp, targ = pickle.load(open("train_data.p", "rb"))
+    inp = pickle.load(open("small_train.p", "rb"), encoding='latin1')
+    targ = pickle.load(open("small_train_sen.p", "rb"), encoding='latin1')
     print('Training dataset Loaded')
 
     '''Shuffle input'''
@@ -25,7 +26,8 @@ def loadDataset():
 
     '''Testing data'''
     print('Loading Testing dataset ....')
-    test_inp, test_targ = pickle.load(open("test_data.p", "rb"))
+    test_inp = pickle.load(open("small_test.p", "rb"), encoding='latin1')
+    test_targ = pickle.load(open("small_test_sen.p", "rb"), encoding='latin1')
     print('Testing dataset loaded')
 
     '''Validation data'''
@@ -95,7 +97,7 @@ class DeepNeuralNetwork:
 
             '''Cost function '''
             self.cost = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(
-                train_logits, self.tf_train[1])) + 0.0001 * self.l2_reg
+                logits=train_logits, labels=self.tf_train[1])) + 0.0001 * self.l2_reg
 
             ''' Adagrad Optimizer '''
             self.optimizer = tf.train.AdagradOptimizer(
@@ -149,7 +151,7 @@ if __name__ == '__main__':
     hiddenLayers = [(1024, 0.5)] * num_layers
     n_in = train_X.shape[1]
     n_out = train_Y.shape[1]
-    n_batches = (train_X.shape[0] / batch_size)
+    n_batches = (train_X.shape[0] // batch_size)
     activation = tf.nn.tanh
 
     ''' Model '''
