@@ -32,10 +32,10 @@ def loadDataset():
 
     '''Validation data'''
     print('Loading Validation dataset ...')
-    valid_inp = inp[200000:]
-    valid_targ = targ[200000:]
-    inp = inp[:200000]
-    targ = targ[:200000]
+    valid_inp = inp[800:]
+    valid_targ = targ[800:]
+    inp = inp[:800]
+    targ = targ[:800]
     print('Validation dataset loaded')
 
     '''Organize into tuples'''
@@ -144,7 +144,7 @@ if __name__ == '__main__':
     train_Y = train[1]
 
     ''' Params '''
-    n_epochs = 600
+    n_epochs = 1000
     batch_size = 128
     learning_rate = 0.01
     num_layers = 3
