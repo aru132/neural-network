@@ -145,7 +145,7 @@ if __name__ == '__main__':
 
     ''' Params '''
     n_epochs = 1000
-    batch_size = 128
+    batch_size = 32
     learning_rate = 0.01
     num_layers = 3
     hiddenLayers = [(1024, 0.5)] * num_layers
