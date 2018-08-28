@@ -1,52 +1,86 @@
+import argparse
 import numpy as np
 import tensorflow as tf
 import _pickle as pickle
 import math
+import time
 
+class Dataset:
 
-def loadDataset():
-    ''' Load training, testing and validation dataset '''
-
-    '''Training data'''
-    print('Loading Training dataset ...')
-    inp = pickle.load(open("small_train.p", "rb"), encoding='latin1')
-    targ = pickle.load(open("small_train_sen.p", "rb"), encoding='latin1')
-    print('Training dataset Loaded')
-
-    '''Shuffle input'''
-    print('Shuffling input ...')
-    x = np.c_[inp.reshape(len(inp), -1), targ.reshape(len(targ), -1)]
-    shuffle_inp = x[:, :inp.size // len(inp)].reshape(inp.shape)
-    shuffle_targ = x[:, inp.size // len(inp):].reshape(targ.shape)
-    np.random.shuffle(x)
-    np.random.shuffle(x)
-    inp = shuffle_inp
-    targ = shuffle_targ
-    print('Input shuffled')
-
-    '''Testing data'''
-    print('Loading Testing dataset ....')
-    test_inp = pickle.load(open("small_test.p", "rb"), encoding='latin1')
-    test_targ = pickle.load(open("small_test_sen.p", "rb"), encoding='latin1')
-    print('Testing dataset loaded')
-
-    '''Validation data'''
-    print('Loading Validation dataset ...')
-    valid_inp = inp[200000:]
-    valid_targ = targ[200000:]
-    inp = inp[:200000]
-    targ = targ[:200000]
-    print('Validation dataset loaded')
-
-    '''Organize into tuples'''
-    train = (inp, targ)
-    test = (test_inp, test_targ)
-    valid = (valid_inp, valid_targ)
-    print('Training set', train[0].shape, train[1].shape)
-    print('Validation set', valid[0].shape, valid[1].shape)
-    print('Test set', test[0].shape, test[1].shape)
-    return train, test, valid
-
+    def __init__(self, num_workers, myid, batch_size):
+        ''' Load training, testing and validation dataset '''
+    
+        '''Training data'''
+#        print('Loading Training dataset ...')
+        inp = pickle.load(open("small_train.p", "rb"), encoding='latin1')
+        targ = pickle.load(open("small_train_sen.p", "rb"), encoding='latin1')
+#        print('Training dataset Loaded')
+    
+        '''Divide training data'''
+        inpSize = len(inp) // num_workers
+        inpOffset = inpSize * myid
+        if (myid < (len(inp) % num_workers)):
+            inpSize = inpSize + 1
+            inpOffset = inpOffset + myid
+        else:
+            inpOffset = inpOffset + (len(inp) % num_workers)
+#        print('!!!!!!', inpSize, '!!!!!!!')
+#        print('!!!!!!', inpOffset, '!!!!!!!')
+        inp = inp[inpOffset:(inpOffset+inpSize)]
+    
+        targSize = len(targ) // num_workers
+        targOffset = targSize * myid
+        if (myid < (len(targ) % num_workers)):
+            targSize = targSize + 1
+            targOffset = targOffset + myid
+        else:
+            targOffset = targOffset + (len(targ) % num_workers)
+        targ = targ[targOffset:(targOffset+targSize)]
+    
+        '''Shuffle input'''
+#        print('Shuffling input ...')
+        x = np.c_[inp.reshape(len(inp), -1), targ.reshape(len(targ), -1)]
+        shuffle_inp = x[:, :inp.size // len(inp)].reshape(inp.shape)
+        shuffle_targ = x[:, inp.size // len(inp):].reshape(targ.shape)
+        np.random.shuffle(x)
+        np.random.shuffle(x)
+        inp = shuffle_inp
+        targ = shuffle_targ
+#        print('Input shuffled')
+    
+        '''Testing data'''
+#        print('Loading Testing dataset ....')
+        test_inp = pickle.load(open("small_test.p", "rb"), encoding='latin1')
+        test_targ = pickle.load(open("small_test_sen.p", "rb"), encoding='latin1')
+#        print('Testing dataset loaded')
+    
+        '''Validation data'''
+#        print('Loading Validation dataset ...')
+        valid_inp = inp[200000:]
+        valid_targ = targ[200000:]
+        inp = inp[:200000]
+        targ = targ[:200000]
+#        print('Validation dataset loaded')
+    
+        '''Organize into tuples'''
+        self.train = (inp, targ)
+        self.test = (test_inp, test_targ)
+        self.valid = (valid_inp, valid_targ)
+        # print('Training set', train[0].shape, train[1].shape)
+        # print('Validation set', valid[0].shape, valid[1].shape)
+        # print('Test set', test[0].shape, test[1].shape)
+        self.n_batches = self.train[0].shape[0] // batch_size
+        self.mb_idx = 0
+        self.batch_size = batch_size
+    def get_data(self):
+        return self.train, self.test, self.valid
+    def get_next_batch(self):
+        train_X = self.train[0]
+        train_Y = self.train[1]
+        batch_X = train_X[self.mb_idx * self.batch_size:(self.mb_idx + 1) * batch_size]
+        batch_Y = train_Y[self.mb_idx * self.batch_size:(self.mb_idx + 1) * batch_size]
+        self.mb_idx = (self.mb_idx + 1) % self.n_batches
+        return batch_X, batch_Y
 
 class DeepNeuralNetwork:
 
@@ -100,8 +134,9 @@ class DeepNeuralNetwork:
                 logits=train_logits, labels=self.tf_train[1])) + 0.0001 * self.l2_reg
 
             ''' Adagrad Optimizer '''
+            self.global_step = tf.train.get_or_create_global_step()
             self.optimizer = tf.train.AdagradOptimizer(
-                learning_rate).minimize(self.cost)
+                learning_rate).minimize(self.cost, global_step = self.global_step)
 
             ''' Prediction functions '''
             self.train_pred = tf.nn.softmax(train_logits)
@@ -138,60 +173,116 @@ def accuracy(pred, labels):
     return (100.0 * np.sum(np.argmax(pred, 1) == np.argmax(labels, 1)) / pred.shape[0])
 
 if __name__ == '__main__':
-    ''' Dataset '''
-    train, valid, test = loadDataset()
-    train_X = train[0]
-    train_Y = train[1]
+    ''' Parse host lists '''
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--ps_hosts",
+        type=str,
+        default="",
+        help="Comma-separated list of hostname:port pairs"
+    )
+    parser.add_argument(
+        "--worker_hosts",
+        type=str,
+        default="",
+        help="Comma-separated list of hostname:port pairs"
+    )
+    parser.add_argument(
+        "--job_name",
+        type=str,
+        default="",
+        help="One of 'ps', 'worker'"
+    )
+    parser.add_argument(
+        "--task_index",
+        type=int,
+        default=0,
+        help="Index of task within the job"
+    )
+    parser.add_argument(
+        "--protocol",
+        type=str,
+        default="grpc",
+        help="Communication protocol"
+    )
+    FLAGS, unparsed = parser.parse_known_args()
+    ps_hosts = FLAGS.ps_hosts.split(",")
+    worker_hosts = FLAGS.worker_hosts.split(",")
+    cluster = tf.train.ClusterSpec({"ps": ps_hosts, "worker": worker_hosts})
+    gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction = 0.33)
+    config = tf.ConfigProto(gpu_options = gpu_options)
+    server = tf.train.Server(cluster,
+                             job_name = FLAGS.job_name,
+                             task_index = FLAGS.task_index,
+                             config = config,
+                             protocol = FLAGS.protocol)
+    if FLAGS.job_name == "ps":
+        server.join()
+    elif FLAGS.job_name == "worker":
+        ''' Params '''
+        n_epochs = 600
+        batch_size = 128
+        learning_rate = 0.01
+        num_layers = 3
+        hiddenLayers = [(1024, 0.5)] * num_layers
+        activation = tf.nn.tanh
 
-    ''' Params '''
-    n_epochs = 600
-    batch_size = 128
-    learning_rate = 0.01
-    num_layers = 3
-    hiddenLayers = [(1024, 0.5)] * num_layers
-    n_in = train_X.shape[1]
-    n_out = train_Y.shape[1]
-    n_batches = (train_X.shape[0] // batch_size)
-    activation = tf.nn.tanh
+        ''' Dataset '''
+        dataset = Dataset(len(worker_hosts),FLAGS.task_index,batch_size)
+        train, valid, test = dataset.get_data()
+        train_X = train[0]
+        train_Y = train[1]
 
-    ''' Model '''
-    dnn = DeepNeuralNetwork(n_in, n_out, test, valid, hiddenLayers,
-                            activation=activation, batch_size=batch_size, learning_rate=learning_rate)
+        n_in = train_X.shape[1]
+        n_out = train_Y.shape[1]
 
-    with tf.Session(graph=dnn.graph) as session:
-        tf.initialize_all_variables().run()
-        for ep in range(n_epochs):
-            avg_cost = 0.
-            avg_acc = 0.
-            valid_acc = []
+        ''' Model '''
+        with tf.device(tf.train.replica_device_setter(
+            worker_device = "/job:worker/task:%d" % FLAGS.task_index,
+            cluster = cluster)):
+                dnn = DeepNeuralNetwork(n_in, n_out, test, valid, hiddenLayers,
+                                        activation=activation, batch_size=batch_size, learning_rate=learning_rate)
 
-            for mb_idx in range(n_batches):
-                ''' Mini-batching '''
-                batch_X = train_X[
-                    mb_idx * batch_size:(mb_idx + 1) * batch_size]
-                batch_Y = train_Y[
-                    mb_idx * batch_size:(mb_idx + 1) * batch_size]
+                hooks = [tf.train.StopAtStepHook(last_step = n_epochs * dataset.n_batches * len(worker_hosts))]
+                with dnn.graph.as_default():
+                    with tf.train.MonitoredTrainingSession(master = server.target,
+                                                     is_chief = (FLAGS.task_index == 0),
+                                                     hooks = hooks) as session:
+#                        tf.initialize_all_variables().run()
+                        loop = 0
+                        start = time.time()
+                        print("time, training accuracy, validation accuracy")
+                        while not session.should_stop():
+                            avg_cost = 0.
+                            avg_acc = 0.
+                            valid_acc = []
 
-                ''' Input to placeholders '''
-                feed_dict = {dnn.tf_train[0]
-                    : batch_X, dnn.tf_train[1]: batch_Y}
+                            ''' Mini-batching '''
+                            batch_X, batch_Y = dataset.get_next_batch()
+                            ''' Input to placeholders '''
+                            feed_dict = {dnn.tf_train[0]
+                                : batch_X, dnn.tf_train[1]: batch_Y}
 
-                ''' Train step '''
-                _, cost, train_pred = session.run(
-                    [dnn.optimizer, dnn.cost, dnn.train_pred], feed_dict=feed_dict)
-                avg_cost += cost
-                avg_acc += accuracy(train_pred, batch_Y)
+                            ''' Train step '''
+                            _, cost, train_pred = session.run(
+                                [dnn.optimizer, dnn.cost, dnn.train_pred], feed_dict=feed_dict)
 
-            if(ep % 10 == 0):
-                print("Cost at {} - {}".format(ep, avg_cost / n_batches))
-                print("Training accuracy : {}".format(avg_acc / n_batches))
-                val_acc = accuracy(dnn.valid_pred.eval(), valid[1])
-                print("Validation accuracy : {}".format(val_acc))
-                valid_acc.append(val_acc)
-                # TODO add patience for early stopping
-                if(len(valid_acc) > 3 and int(valid_acc[-1] * 100) - int(valid_acc[-3] * 100) > -1):
-                    break
+                            acc = accuracy(train_pred, batch_Y)
 
-        ''' Testing '''
-        print("Test accuracy : {}".format(
-            accuracy(dnn.test_pred.eval(), test[1])))
+                            if(loop % dataset.n_batches == 0):
+                                ep = loop // dataset.n_batches
+                                elasped = time.time() - start
+#                                print("Cost at {} - {}".format(ep, cost))
+#                                print("Training accuracy : {}".format(acc))
+                                val_acc = accuracy(dnn.valid_pred.eval(session = session), valid[1])
+#                                print("Validation accuracy : {}".format(val_acc))
+                                print("%f %f %f" % (elasped, acc, val_acc))
+                                valid_acc.append(val_acc)
+                                # TODO add patience for early stopping
+                                if(len(valid_acc) > 3 and int(valid_acc[-1] * 100) - int(valid_acc[-3] * 100) > -1):
+                                    break
+                            loop = loop + 1
+
+#                        ''' Testing '''
+#                        print("Test accuracy : {}".format(
+#                            accuracy(dnn.test_pred.eval(), test[1])))
